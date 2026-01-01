@@ -35,7 +35,8 @@ io.on("connection", socket => {
         hand: deck.splice(0, 3)
       }],
       deck,
-      pile: []
+      pile: [],
+      turn: 0
     };
 
     socket.join(roomId);
@@ -54,10 +55,18 @@ io.on("connection", socket => {
   });
 
   socket.on("play", ({ roomId, card }) => {
-    const room = rooms[roomId];
-    room.pile.push(card);
-    io.to(roomId).emit("state", room);
-  });
+  const room = rooms[roomId];
+  const currentPlayer = room.players[room.turn];
+
+  if (currentPlayer.id !== socket.id) return;
+
+  currentPlayer.hand = currentPlayer.hand.filter(c => c !== card);
+  room.pile.push(card);
+
+  room.turn = (room.turn + 1) % room.players.length;
+
+  io.to(roomId).emit("state", room);
+});
 
 });
 
