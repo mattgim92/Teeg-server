@@ -61,12 +61,23 @@ io.on("connection", socket => {
   const room = rooms[roomId];
   const currentPlayer = room.players[room.turn];
 
-  if (currentPlayer.id !== socket.id) return;
+  if (!room || currentPlayer.id !== socket.id) return;
 
+  // Remove card from hand
   currentPlayer.hand = currentPlayer.hand.filter(c => c !== card);
+
+  // Add to pile
   room.pile.push(card);
 
-  room.turn = (room.turn + 1) % room.players.length;
+  // 💥 BOMB CARD (10)
+  if (card === "10") {
+    room.pile = []; // clear pile
+    io.to(roomId).emit("bomb"); // tell clients
+    // same player goes again
+  } else {
+    // normal turn progression
+    room.turn = (room.turn + 1) % room.players.length;
+  }
 
   io.to(roomId).emit("state", room);
 });
