@@ -64,24 +64,30 @@ io.on("connection", socket => {
 
     socket.join(id);
     cb(id);
-    io.to(id).emit("state", rooms[id]);
+    socket.emit("state", rooms[id]);
   });
 
   socket.on("join-room", ({ roomId, name }) => {
-    const room = rooms[roomId];
-    if (!room) return;
+  const room = rooms[roomId];
+  if (!room) return;
 
+  // Prevent duplicates
   if (room.players.find(p => p.id === socket.id)) return;
-    
-    room.players.push({
-      id: socket.id,
-      name,
-      hand: room.deck.splice(0, 3)
-    });
 
-    socket.join(roomId);
-    io.to(roomId).emit("state", room);
+  socket.join(roomId);
+
+  room.players.push({
+    id: socket.id,
+    name,
+    hand: room.deck.splice(0, 3)
   });
+
+  // Send state directly to joiner
+  socket.emit("state", room);
+
+  // Re-sync everyone else
+  socket.to(roomId).emit("state", room);
+});
 
   socket.on("play", ({ roomId, card }) => {
     const room = rooms[roomId];
