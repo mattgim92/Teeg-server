@@ -4,35 +4,29 @@ const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
+
+/* REQUIRED FOR RENDER */
 app.get("/", (req, res) => {
   res.send("TEEG SERVER RUNNING");
 });
 
 const io = new Server(server, {
-  cors: {
-    origin: "*"
-  }
+  cors: { origin: "*" },
+  transports: ["polling"],     // 🔑 critical
+  allowEIO3: true
 });
 
-const PORT = process.env.PORT || 3000;
-
+const PORT = process.env.PORT || 10000;
 const rooms = {};
 
-/* ======================
-   CARD / DECK UTILITIES
-====================== */
+/* ----------------- UTILITIES ----------------- */
 
 function createDeck() {
-  const values = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
-  const suits = ["♠", "♥", "♦", "♣"];
+  const values = ["2","3","4","5","6","7","8","9","10","J","Q","K","A"];
   const deck = [];
-
   for (const v of values) {
-    for (const s of suits) {
-      deck.push(v);
-    }
+    for (let i = 0; i < 4; i++) deck.push(v);
   }
-
   return shuffle(deck);
 }
 
@@ -44,24 +38,20 @@ function shuffle(deck) {
   return deck;
 }
 
-function generateRoomId() {
+function roomId() {
   return Math.random().toString(36).substring(2, 7);
 }
 
-/* ======================
-   SOCKET.IO LOGIC
-====================== */
+/* ----------------- SOCKET LOGIC ----------------- */
 
 io.on("connection", socket => {
   console.log("Socket connected:", socket.id);
-  console.log("Connected:", socket.id);
 
-  /* CREATE ROOM */
-  socket.on("create-room", (name, callback) => {
-    const roomId = generateRoomId();
+  socket.on("create-room", (name, cb) => {
+    const id = roomId();
     const deck = createDeck();
 
-    rooms[roomId] = {
+    rooms[id] = {
       players: [{
         id: socket.id,
         name,
@@ -72,13 +62,11 @@ io.on("connection", socket => {
       turn: 0
     };
 
-    socket.join(roomId);
-
-    if (callback) callback(roomId);
-    io.to(roomId).emit("state", rooms[roomId]);
+    socket.join(id);
+    cb(id);
+    io.to(id).emit("state", rooms[id]);
   });
 
-  /* JOIN ROOM */
   socket.on("join-room", ({ roomId, name }) => {
     const room = rooms[roomId];
     if (!room) return;
@@ -93,62 +81,44 @@ io.on("connection", socket => {
     io.to(roomId).emit("state", room);
   });
 
-  /* PLAY CARD */
   socket.on("play", ({ roomId, card }) => {
     const room = rooms[roomId];
     if (!room) return;
 
-    const currentPlayer = room.players[room.turn];
-    if (!currentPlayer || currentPlayer.id !== socket.id) return;
+    const current = room.players[room.turn];
+    if (current.id !== socket.id) return;
 
-    // Remove ONE instance of the card
-    const index = currentPlayer.hand.indexOf(card);
-    if (index === -1) return;
-    currentPlayer.hand.splice(index, 1);
+    const i = current.hand.indexOf(card);
+    if (i === -1) return;
+    current.hand.splice(i, 1);
 
     room.pile.push(card);
 
-    // 💥 BOMB CARD (10)
     if (card === "10") {
       room.pile = [];
       io.to(roomId).emit("bomb");
-      // same player keeps turn
     } else {
       room.turn = (room.turn + 1) % room.players.length;
     }
 
-    /* GAME OVER CHECK */
-    const activePlayers = room.players.filter(p => p.hand.length > 0);
-
-    if (activePlayers.length === 1) {
-      io.to(roomId).emit("game-over", {
-        teeg: activePlayers[0].name
-      });
+    const active = room.players.filter(p => p.hand.length > 0);
+    if (active.length === 1) {
+      io.to(roomId).emit("game-over", { teeg: active[0].name });
       return;
     }
 
     io.to(roomId).emit("state", room);
   });
 
-  /* DISCONNECT */
   socket.on("disconnect", () => {
-    for (const roomId in rooms) {
-      const room = rooms[roomId];
-      room.players = room.players.filter(p => p.id !== socket.id);
-
-      if (room.players.length === 0) {
-        delete rooms[roomId];
-      } else {
-        io.to(roomId).emit("state", room);
-      }
+    for (const id in rooms) {
+      rooms[id].players = rooms[id].players.filter(p => p.id !== socket.id);
+      if (rooms[id].players.length === 0) delete rooms[id];
+      else io.to(id).emit("state", rooms[id]);
     }
   });
 });
 
-/* ======================
-   START SERVER
-====================== */
-
 server.listen(PORT, () => {
-  console.log(`TEEG server running on port ${PORT}`);
+  console.log("Teeg server running on port", PORT);
 });
