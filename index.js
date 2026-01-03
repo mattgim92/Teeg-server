@@ -71,6 +71,8 @@ io.on("connection", socket => {
     const room = rooms[roomId];
     if (!room) return;
 
+  if (room.players.find(p => p.id === socket.id)) return;
+    
     room.players.push({
       id: socket.id,
       name,
