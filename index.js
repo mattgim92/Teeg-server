@@ -4,14 +4,33 @@ const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+
+const io = new Server(server, {
+  cors: {
+    origin: "*"
+  }
+});
+
+const PORT = process.env.PORT || 3000;
 
 const rooms = {};
 
-const VALUES = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
+/* ======================
+   CARD / DECK UTILITIES
+====================== */
 
 function createDeck() {
-  return VALUES.flatMap(v => Array(4).fill(v));
+  const values = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
+  const suits = ["♠", "♥", "♦", "♣"];
+  const deck = [];
+
+  for (const v of values) {
+    for (const s of suits) {
+      deck.push(v);
+    }
+  }
+
+  return shuffle(deck);
 }
 
 function shuffle(deck) {
@@ -19,14 +38,24 @@ function shuffle(deck) {
     const j = Math.floor(Math.random() * (i + 1));
     [deck[i], deck[j]] = [deck[j], deck[i]];
   }
+  return deck;
 }
 
-io.on("connection", socket => {
+function generateRoomId() {
+  return Math.random().toString(36).substring(2, 7);
+}
 
-  socket.on("create-room", (name, cb) => {
-    const roomId = Math.random().toString(36).substring(2, 7);
+/* ======================
+   SOCKET.IO LOGIC
+====================== */
+
+io.on("connection", socket => {
+  console.log("Connected:", socket.id);
+
+  /* CREATE ROOM */
+  socket.on("create-room", (name, callback) => {
+    const roomId = generateRoomId();
     const deck = createDeck();
-    shuffle(deck);
 
     rooms[roomId] = {
       players: [{
@@ -40,57 +69,82 @@ io.on("connection", socket => {
     };
 
     socket.join(roomId);
-    cb(roomId);
+
+    if (callback) callback(roomId);
+    io.to(roomId).emit("state", rooms[roomId]);
   });
 
+  /* JOIN ROOM */
   socket.on("join-room", ({ roomId, name }) => {
-  const room = rooms[roomId];
-  if (!room) return;
+    const room = rooms[roomId];
+    if (!room) return;
 
-  room.players.push({
-    id: socket.id,
-    name,
-    hand: room.deck.splice(0, 3)
+    room.players.push({
+      id: socket.id,
+      name,
+      hand: room.deck.splice(0, 3)
+    });
+
+    socket.join(roomId);
+    io.to(roomId).emit("state", room);
   });
 
-  socket.join(roomId);
-  io.to(roomId).emit("state", room);
-});
-
+  /* PLAY CARD */
   socket.on("play", ({ roomId, card }) => {
-  const room = rooms[roomId];
-  const currentPlayer = room.players[room.turn];
+    const room = rooms[roomId];
+    if (!room) return;
 
-  if (!room || currentPlayer.id !== socket.id) return;
+    const currentPlayer = room.players[room.turn];
+    if (!currentPlayer || currentPlayer.id !== socket.id) return;
 
-  // Remove card from hand
-  currentPlayer.hand = currentPlayer.hand.filter(c => c !== card);
+    // Remove ONE instance of the card
+    const index = currentPlayer.hand.indexOf(card);
+    if (index === -1) return;
+    currentPlayer.hand.splice(index, 1);
 
-  // Add to pile
-  room.pile.push(card);
+    room.pile.push(card);
 
-  // 💥 BOMB CARD (10)
-  if (card === "10") {
-    room.pile = []; // clear pile
-    io.to(roomId).emit("bomb"); // tell clients
-    // same player goes again
-  } else {
-    // normal turn progression
-    room.turn = (room.turn + 1) % room.players.length;
-  }
+    // 💥 BOMB CARD (10)
+    if (card === "10") {
+      room.pile = [];
+      io.to(roomId).emit("bomb");
+      // same player keeps turn
+    } else {
+      room.turn = (room.turn + 1) % room.players.length;
+    }
 
-  // Check for game over
-const activePlayers = room.players.filter(p => p.hand.length > 0);
+    /* GAME OVER CHECK */
+    const activePlayers = room.players.filter(p => p.hand.length > 0);
 
-if (activePlayers.length === 1) {
-  io.to(roomId).emit("game-over", {
-    teeg: activePlayers[0].name
+    if (activePlayers.length === 1) {
+      io.to(roomId).emit("game-over", {
+        teeg: activePlayers[0].name
+      });
+      return;
+    }
+
+    io.to(roomId).emit("state", room);
   });
-  return;
-}
 
-io.to(roomId).emit("state", room);
+  /* DISCONNECT */
+  socket.on("disconnect", () => {
+    for (const roomId in rooms) {
+      const room = rooms[roomId];
+      room.players = room.players.filter(p => p.id !== socket.id);
 
+      if (room.players.length === 0) {
+        delete rooms[roomId];
+      } else {
+        io.to(roomId).emit("state", room);
+      }
+    }
+  });
 });
 
-server.listen(3000);
+/* ======================
+   START SERVER
+====================== */
+
+server.listen(PORT, () => {
+  console.log(`TEEG server running on port ${PORT}`);
+});
