@@ -7,8 +7,10 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "*"
-  }
+    origin: "*",
+    methods: ["GET", "POST"]
+  },
+  transports: ["websocket", "polling"]
 });
 
 const PORT = process.env.PORT || 3000;
@@ -50,6 +52,7 @@ function generateRoomId() {
 ====================== */
 
 io.on("connection", socket => {
+  console.log("Socket connected:", socket.id);
   console.log("Connected:", socket.id);
 
   /* CREATE ROOM */
