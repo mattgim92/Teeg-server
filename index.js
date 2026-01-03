@@ -79,8 +79,17 @@ io.on("connection", socket => {
     room.turn = (room.turn + 1) % room.players.length;
   }
 
-  io.to(roomId).emit("state", room);
-});
+  // Check for game over
+const activePlayers = room.players.filter(p => p.hand.length > 0);
+
+if (activePlayers.length === 1) {
+  io.to(roomId).emit("game-over", {
+    teeg: activePlayers[0].name
+  });
+  return;
+}
+
+io.to(roomId).emit("state", room);
 
 });
 
