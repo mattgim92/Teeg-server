@@ -4,13 +4,14 @@ const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
+app.get("/", (req, res) => {
+  res.send("TEEG SERVER RUNNING");
+});
 
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  },
-  transports: ["websocket", "polling"]
+    origin: "*"
+  }
 });
 
 const PORT = process.env.PORT || 3000;
