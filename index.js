@@ -44,15 +44,18 @@ io.on("connection", socket => {
   });
 
   socket.on("join-room", ({ roomId, name }) => {
-    const room = rooms[roomId];
-    room.players.push({
-      id: socket.id,
-      name,
-      hand: room.deck.splice(0, 3)
-    });
-    socket.join(roomId);
-    io.to(roomId).emit("state", room);
+  const room = rooms[roomId];
+  if (!room) return;
+
+  room.players.push({
+    id: socket.id,
+    name,
+    hand: room.deck.splice(0, 3)
   });
+
+  socket.join(roomId);
+  io.to(roomId).emit("state", room);
+});
 
   socket.on("play", ({ roomId, card }) => {
   const room = rooms[roomId];
