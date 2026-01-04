@@ -21,6 +21,12 @@ const rooms = {};
 
 /* ----------------- UTILITIES ----------------- */
 
+const CARD_VALUES = {
+  "4": 4, "5": 5, "6": 6, "7": 7,
+  "8": 8, "9": 9, "J": 11,
+  "Q": 12, "K": 13, "A": 14
+};
+
 function createDeck() {
   const values = ["2","3","4","5","6","7","8","9","10","J","Q","K","A"];
   const deck = [];
@@ -44,6 +50,15 @@ function roomId() {
 
 /* ----------------- SOCKET LOGIC ----------------- */
 
+function canPlay(card, room) {
+  // Special cards always allowed
+  if (card === "2" || card === "3" || card === "10") return true;
+
+  if (room.pileValue === null) return true;
+
+  return CARD_VALUES[card] >= room.pileValue;
+}
+
 io.on("connection", socket => {
   console.log("Socket connected:", socket.id);
   socket.on("create-room", (name, cb) => {
@@ -60,6 +75,9 @@ io.on("connection", socket => {
       }],
       deck,
       pile: [],
+      pileValue: null,       // current value to beat
+      fourCount: 0,          // count toward 4-of-a-kind
+      lastNonThree: null     // for 3-copy logic
       turn: 0
     };
 
@@ -90,34 +108,95 @@ io.on("connection", socket => {
   socket.to(roomId).emit("state", room);
 });
 
-  socket.on("play", ({ roomId, card }) => {
-    const room = rooms[roomId];
-    if (!room) return;
+socket.on("play", ({ roomId, card }) => {
+  const room = rooms[roomId];
+  if (!room) return;
 
-    const current = room.players[room.turn];
-    if (current.id !== socket.id) return;
+  const player = room.players[room.turn];
+  if (player.id !== socket.id) return;
 
-    const i = current.hand.indexOf(card);
-    if (i === -1) return;
-    current.hand.splice(i, 1);
+  // Card must be in hand
+  const idx = player.hand.indexOf(card);
+  if (idx === -1) return;
 
-    room.pile.push(card);
-
-    if (card === "10") {
-      room.pile = [];
-      io.to(roomId).emit("bomb");
-    } else {
-      room.turn = (room.turn + 1) % room.players.length;
-    }
-
-    const active = room.players.filter(p => p.hand.length > 0);
-    if (active.length === 1) {
-      io.to(roomId).emit("game-over", { teeg: active[0].name });
-      return;
-    }
-
+  // Validate play
+  if (!canPlay(card, room)) {
+    // Invalid play → pick up pile
+    player.hand.push(...room.pile);
+    room.pile = [];
+    room.pileValue = null;
+    room.fourCount = 0;
+    room.lastNonThree = null;
     io.to(roomId).emit("state", room);
-  });
+    return;
+  }
+
+  // Remove card from hand
+  player.hand.splice(idx, 1);
+  room.pile.push(card);
+
+  /* ---------- SPECIAL CARDS ---------- */
+
+  // 🔥 BOMB (10)
+  if (card === "10") {
+    room.pile = [];
+    room.pileValue = null;
+    room.fourCount = 0;
+    room.lastNonThree = null;
+    io.to(roomId).emit("bomb");
+    io.to(roomId).emit("state", room);
+    return; // same player goes again
+  }
+
+  // 🔄 RESET (2)
+  if (card === "2") {
+    room.pileValue = null;
+    room.fourCount = 1;
+  }
+
+  // 🪞 COPY (3)
+  else if (card === "3") {
+    if (room.lastNonThree) {
+      room.fourCount++;
+      if (room.fourCount === 4) {
+        room.pile = [];
+        room.pileValue = null;
+        room.fourCount = 0;
+        room.lastNonThree = null;
+        io.to(roomId).emit("bomb");
+        io.to(roomId).emit("state", room);
+        return;
+      }
+    }
+  }
+
+  // 🔢 NORMAL CARD
+  else {
+    if (room.lastNonThree === card) {
+      room.fourCount++;
+    } else {
+      room.fourCount = 1;
+    }
+
+    room.pileValue = CARD_VALUES[card];
+    room.lastNonThree = card;
+  }
+
+  // 🔥 4 OF A KIND BOMB
+  if (room.fourCount === 4) {
+    room.pile = [];
+    room.pileValue = null;
+    room.fourCount = 0;
+    room.lastNonThree = null;
+    io.to(roomId).emit("bomb");
+    io.to(roomId).emit("state", room);
+    return; // same player goes again
+  }
+
+  // Next player's turn
+  room.turn = (room.turn + 1) % room.players.length;
+  io.to(roomId).emit("state", room);
+});
 
   socket.on("disconnect", () => {
     for (const id in rooms) {
