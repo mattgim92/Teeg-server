@@ -46,8 +46,9 @@ function roomId() {
 
 io.on("connection", socket => {
   console.log("Socket connected:", socket.id);
-
   socket.on("create-room", (name, cb) => {
+    console.log("Create room request from", name, socket.id);
+    
     const id = roomId();
     const deck = createDeck();
 
