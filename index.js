@@ -77,7 +77,7 @@ io.on("connection", socket => {
       pile: [],
       pileValue: null,       // current value to beat
       fourCount: 0,          // count toward 4-of-a-kind
-      lastNonThree: null     // for 3-copy logic
+      lastNonThree: null,     // for 3-copy logic
       turn: 0
     };
 
