@@ -95,11 +95,14 @@ io.on("connection", socket => {
 
   socket.join(roomId);
 
-  room.players.push({
-    id: socket.id,
-    name,
-    hand: room.deck.splice(0, 3)
-  });
+    room.players.push({
+  id: socket.id,
+  name,
+  hand: room.deck.splice(0, 3),
+  faceUp: [],
+  faceDown: [],
+  stage: "hand" // hand → faceUp → faceDown
+});
 
   // Send state directly to joiner
   socket.emit("state", room);
@@ -115,24 +118,35 @@ socket.on("play", ({ roomId, card }) => {
   const player = room.players[room.turn];
   if (player.id !== socket.id) return;
 
-  // Card must be in hand
-  const idx = player.hand.indexOf(card);
+  // Determine source array based on stage
+  let source;
+  if (player.stage === "hand") source = player.hand;
+  else if (player.stage === "faceUp") source = player.faceUp;
+  else if (player.stage === "faceDown") source = player.faceDown;
+  else return; // player is out
+
+  // Check if the card exists
+  const idx = source.indexOf(card);
   if (idx === -1) return;
 
-  // Validate play
+  // STEP 5: Face-down failure
   if (!canPlay(card, room)) {
-    // Invalid play → pick up pile
+    // Pick up pile
     player.hand.push(...room.pile);
     room.pile = [];
     room.pileValue = null;
     room.fourCount = 0;
     room.lastNonThree = null;
+
+    // Face-down failure → return to hand
+    if (player.stage !== "hand") player.stage = "hand";
+
     io.to(roomId).emit("state", room);
     return;
   }
 
-  // Remove card from hand
-  player.hand.splice(idx, 1);
+  // Remove card from correct stage
+  source.splice(idx, 1);
   room.pile.push(card);
 
   /* ---------- SPECIAL CARDS ---------- */
@@ -165,7 +179,7 @@ socket.on("play", ({ roomId, card }) => {
         room.lastNonThree = null;
         io.to(roomId).emit("bomb");
         io.to(roomId).emit("state", room);
-        return;
+        return; // same player goes again
       }
     }
   }
@@ -193,7 +207,22 @@ socket.on("play", ({ roomId, card }) => {
     return; // same player goes again
   }
 
-  // Next player's turn
+  /* ---------- STEP 4: Auto-advance stage ---------- */
+  function updateStage(player) {
+    if (player.hand.length > 0) return;
+    if (player.faceUp.length > 0) {
+      player.stage = "faceUp";
+      return;
+    }
+    if (player.faceDown.length > 0) {
+      player.stage = "faceDown";
+      return;
+    }
+    player.stage = "out"; // finished
+  }
+  updateStage(player);
+
+  // Next player's turn (unless Bomb overrides)
   room.turn = (room.turn + 1) % room.players.length;
   io.to(roomId).emit("state", room);
 });
