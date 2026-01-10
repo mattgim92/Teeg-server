@@ -50,6 +50,8 @@ function roomId() {
 
 /* ----------------- SOCKET LOGIC ----------------- */
 
+console.log("Player:", player.name, "stage:", player.stage, "hand:", player.hand, "card trying to play:", card);
+
 function canPlay(card, room) {
   // Special cards always allowed
   if (card === "2" || card === "3" || card === "10") return true;
