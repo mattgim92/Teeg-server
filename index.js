@@ -110,103 +110,122 @@ io.on("connection", socket => {
   });
 
   /* ---------- PLAY CARD ---------- */
-  socket.on("play", ({ roomId, card }) => {
-    const room = rooms[roomId];
-    if (!room) return;
+socket.on("play", ({ roomId, cards }) => {
+  const room = rooms[roomId];
+  if (!room) return;
 
-    const player = room.players[room.turn];
-    if (!player || player.id !== socket.id) return;
+  const player = room.players[room.turn];
+  if (!player || player.id !== socket.id) return;
 
-    /* 🔑 FORCE HAND STAGE */
-    if (player.hand.length > 0) {
-      player.stage = "hand";
-    }
+  /* 🔑 FORCE HAND STAGE */
+  if (player.hand.length > 0) {
+    player.stage = "hand";
+  }
 
-    /* Determine source */
-    let source;
-    if (player.stage === "hand") source = player.hand;
-    else if (player.stage === "faceUp") source = player.faceUp;
-    else if (player.stage === "faceDown") source = player.faceDown;
-    else return;
+  /* Determine source */
+  let source;
+  if (player.stage === "hand") source = player.hand;
+  else if (player.stage === "faceUp") source = player.faceUp;
+  else if (player.stage === "faceDown") source = player.faceDown;
+  else return;
 
-    const idx = source.indexOf(card);
-    if (idx === -1) return;
+  /* Face-down = single card only */
+  if (player.stage === "faceDown" && cards.length !== 1) return;
 
-    /* ❌ INVALID PLAY → PICK UP */
-    if (!canPlay(card, room)) {
-      player.hand.push(...room.pile);
-      room.pile = [];
-      room.pileValue = null;
-      room.fourCount = 0;
-      room.lastNonThree = null;
-      player.stage = "hand";
+  /* All cards must match */
+  const value = cards[0];
+  if (!cards.every(c => c === value)) return;
 
-      io.to(roomId).emit("state", room);
-      return;
-    }
+  /* Player must own all cards */
+  for (const c of cards) {
+    if (!source.includes(c)) return;
+  }
 
-    /* ✅ VALID PLAY */
-    source.splice(idx, 1);
-    room.pile.push(card);
+  /* ❌ INVALID PLAY */
+  if (!canPlay(value, room)) {
+    player.hand.push(...room.pile);
+    room.pile = [];
+    room.pileValue = null;
+    room.fourCount = 0;
+    room.lastNonThree = null;
+    player.stage = "hand";
 
-    /* ---------- SPECIAL CARDS ---------- */
-
-    // 💣 10 BOMB
-    if (card === "10") {
-      room.pile = [];
-      room.pileValue = null;
-      room.fourCount = 0;
-      room.lastNonThree = null;
-      io.to(roomId).emit("bomb");
-      io.to(roomId).emit("state", room);
-      return;
-    }
-
-    // 🔄 RESET
-    if (card === "2") {
-      room.pileValue = null;
-      room.fourCount = 1;
-    }
-
-    // 🪞 COPY
-    else if (card === "3") {
-      if (room.lastNonThree) room.fourCount++;
-    }
-
-    // 🔢 NORMAL
-    else {
-      room.fourCount = (room.lastNonThree === card) ? room.fourCount + 1 : 1;
-      room.pileValue = CARD_VALUES[card];
-      room.lastNonThree = card;
-    }
-
-    /* 🔥 4 OF A KIND */
-    if (room.fourCount === 4) {
-      room.pile = [];
-      room.pileValue = null;
-      room.fourCount = 0;
-      room.lastNonThree = null;
-      io.to(roomId).emit("bomb");
-      io.to(roomId).emit("state", room);
-      return;
-    }
-
-    /* ---------- STAGE ADVANCE ---------- */
-    if (player.hand.length === 0 && player.stage === "hand") {
-      player.stage = player.faceUp.length ? "faceUp" : "faceDown";
-    }
-
-    if (player.stage === "faceUp" && player.faceUp.length === 0) {
-      player.stage = player.faceDown.length ? "faceDown" : "out";
-    }
-
-    if (player.stage === "faceDown" && player.faceDown.length === 0) {
-      player.stage = "out";
-    }
-
-    room.turn = (room.turn + 1) % room.players.length;
     io.to(roomId).emit("state", room);
-  });
+    return;
+  }
+
+  /* ✅ REMOVE CARDS */
+  for (const c of cards) {
+    source.splice(source.indexOf(c), 1);
+    room.pile.push(c);
+  }
+
+  /* ---------- SPECIAL CARDS ---------- */
+
+  // 💣 10 BOMB (grouped allowed)
+  if (value === "10") {
+    room.pile = [];
+    room.pileValue = null;
+    room.fourCount = 0;
+    room.lastNonThree = null;
+
+    io.to(roomId).emit("bomb");
+    io.to(roomId).emit("state", room);
+    return; // same player goes again
+  }
+
+  // 🔄 RESET (2)
+  if (value === "2") {
+    room.pileValue = null;
+    room.fourCount = cards.length;
+  }
+
+  // 🪞 COPY (3)
+  else if (value === "3") {
+    if (room.lastNonThree) {
+      room.fourCount += cards.length;
+    }
+  }
+
+  // 🔢 NORMAL CARDS
+  else {
+    if (room.lastNonThree === value) {
+      room.fourCount += cards.length;
+    } else {
+      room.fourCount = cards.length;
+    }
+    room.pileValue = CARD_VALUES[value];
+    room.lastNonThree = value;
+  }
+
+  /* 🔥 4-OF-A-KIND (INCLUDING MULTI-PLAYS) */
+  if (room.fourCount >= 4) {
+    room.pile = [];
+    room.pileValue = null;
+    room.fourCount = 0;
+    room.lastNonThree = null;
+
+    io.to(roomId).emit("bomb");
+    io.to(roomId).emit("state", room);
+    return; // same player continues
+  }
+
+  /* ---------- STAGE ADVANCE ---------- */
+  if (player.hand.length === 0 && player.stage === "hand") {
+    player.stage = player.faceUp.length ? "faceUp" : "faceDown";
+  }
+
+  if (player.stage === "faceUp" && player.faceUp.length === 0) {
+    player.stage = player.faceDown.length ? "faceDown" : "out";
+  }
+
+  if (player.stage === "faceDown" && player.faceDown.length === 0) {
+    player.stage = "out";
+  }
+
+  room.turn = (room.turn + 1) % room.players.length;
+  io.to(roomId).emit("state", room);
+});
 
   /* ---------- DISCONNECT ---------- */
   socket.on("disconnect", () => {
